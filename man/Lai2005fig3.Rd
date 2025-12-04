@@ -8,7 +8,7 @@ Normalized glioblastoma profile for chromosome 13
 This dataset is taken from Lai W, Johnson MJ, Kucherlapati R, Park PJ, Bioinformatics , 2005.  The paper states that the original source of the data is from Bredel et al. (2005).  The data is Chromosome 13 in GBM31.
 }
 \usage{
-Lai2005fig3
+data(Lai2005fig3)
 }
 \format{
 	A matrix of dimensions 797 x 5.  The columns are Spot, CH, POS.start, POS.end, GBM31.

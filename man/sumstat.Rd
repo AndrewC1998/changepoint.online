@@ -7,12 +7,14 @@ Generic Function - sumstat
 Generic function
 }
 \usage{
-sumstat(object)
+sumstat(object, ...)
 }
 \arguments{
   \item{object}{
 	Depending on the class of \code{object} depends on the method used (and if one exists)
 }
+
+  \item{...}{Additional arguments passed to methods.}
 }
 \details{
 	Generic Function

@@ -8,7 +8,7 @@ Wave data from buoy c44137
 	This dataset gives the significant wave heights from buoy c44137 obtained from the Fisheries and Oceans Canada, East Scotian Slop.  The data are taken at hourly intervals from January 2005 until September 2012.
 }
 \usage{
-wave.c44137
+data(wave.c44137)
 }
 \format{
 	A vector of length 63651.

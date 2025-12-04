@@ -8,9 +8,6 @@ PELT.online = function(sumstat,pen=0, cost_func = "mean.norm", shape = 1, minseg
   if(nupdate<2){stop('Data must have at least 2 observations to fit a changepoint model.')}
   storage.mode(sumstat) = 'double'
   
-  
-  
-  
   if(missing(lastchangelike)) {lastchangelike = array(0,dim = nupdate + ndone + 1)}
   storage.mode(lastchangelike) = 'double'
   

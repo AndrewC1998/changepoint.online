@@ -1,17 +1,13 @@
-import(changepoint)
-import(methods)
-import(zoo)
-import(Rcpp)
-import(ecp)
-importFrom("graphics", "abline", "lines", "segments")
-importFrom("stats", "is.ts", "ts", "var","dist")
-importFrom("utils", "tail")
- 	
-
-exportPattern("^[^\\.]")
-
 useDynLib(changepoint.online)
 
+import(methods)
+import(zoo)
+import(changepoint)
+import(ecp)
+import(Rcpp)
 
+importFrom(stats, is.ts, ts, var, dist)
+importFrom(graphics, abline, lines, segments)
+importFrom(utils, data, tail)
 
-
+exportPattern("^[^\\.]")

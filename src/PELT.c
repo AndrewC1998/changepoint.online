@@ -1,172 +1,212 @@
 #include <R.h>
 #include <Rmath.h>
-#include <Rinternals.h> // RK addition
-#include <R_ext/RS.h>    // RK addition
-#include <R_ext/Lapack.h> // RK addition
-#include <R_ext/BLAS.h> // RK addition
+#include <Rinternals.h>
+#include <R_ext/RS.h>
+#include <R_ext/Lapack.h>
+#include <R_ext/BLAS.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
 
-#define SWAP(a,b)   { int t; t=a; a=b; b=t; }  // Macro for swapping
+#define SWAP(a,b)   { int t; t=a; a=b; b=t; }
 
-static double *tmplike;
+/* ------------------------------------------------------------------
+   Forward declarations
+   ------------------------------------------------------------------ */
 
-void FreePELT(error)
-int *error; // Error code from PELT C function, non-zero => error
+static double *tmplike = NULL;
+
+/* cost functions (defined in cost_general_functions.c) */
+double mll_var(double x, double x2, double x3, int n, double shape);
+double mll_mean(double x, double x2, double x3, int n, double shape);
+double mll_meanvar(double x, double x2, double x3, int n, double shape);
+double mll_meanvar_exp(double x, double x2, double x3, int n, double shape);
+double mll_meanvar_gamma(double x, double x2, double x3, int n, double shape);
+double mll_meanvar_poisson(double x, double x2, double x3, int n, double shape);
+
+double mbic_var(double x, double x2, double x3, int n, double shape);
+double mbic_mean(double x, double x2, double x3, int n, double shape);
+double mbic_meanvar(double x, double x2, double x3, int n, double shape);
+double mbic_meanvar_exp(double x, double x2, double x3, int n, double shape);
+double mbic_meanvar_gamma(double x, double x2, double x3, int n, double shape);
+double mbic_meanvar_poisson(double x, double x2, double x3, int n, double shape);
+
+/* utility to find minimum and its index */
+void min_which(double *x, int n, double *minout, int *whichout);
+
+/* ------------------------------------------------------------------
+   FreePELT: free temporary memory, called from R if desired
+   ------------------------------------------------------------------ */
+
+void FreePELT(int *err)
 {
-    if(*error==0){
-        free((void *)tmplike);
+    /* Only free if there was no error and memory was allocated */
+    if (err != NULL && *err == 0 && tmplike != NULL) {
+        free((void *) tmplike);
+        tmplike = NULL;
     }
 }
 
- 
-void PELT_online(cost_func, sumstat, ndone, nupdate, pen, cptsout, error, shape, minseglen, lastchangelike, lastchangecpts, checklist, nchecklist)
-char **cost_func;
-double *sumstat;    /* Summary statistics for the time series (ndone+nupdate) */
-int *ndone;            /* Length of the time series analyzed so far */
-int *nupdate;            /* Length of the time series to be analysed in this update (i.e. total length is ndone+nupdate) */
-double *pen;  /* Penalty used to decide if a changepoint is significant */
-int *cptsout;   /* Vector of locations of the identified changepoints up to (ndone+nupdate) */
-int *error;   /* 0 by default, nonzero indicates error in code */
-double *shape; // only used when cost_func is the gamma likelihood
-int *minseglen; //minimum segment length
-double *lastchangelike;    /* Vector of likelihoods for the data up to n (to be added to), length (ndone+nupdate) */
-int *lastchangecpts;    /* Vector of identified last changepoint locations up to n (to be added to), length 2*(ndone+nupdate) */
-int *checklist;    /* Vector of locations of the potential last changepoint for next iteration (to be updated), max length=(ndone+nupdate) */
-int *nchecklist;    /* Number in the checklist currently (to be updated) */
-{
-    // R code does know.mean and fills mu if necessary
-    // must have at least 1 observations for initialisation, i.e. if ndone=0 then nupdate>=1
+/* ------------------------------------------------------------------
+   PELT_online: core online PELT recursion
+   ------------------------------------------------------------------ */
 
-    double (*costfunction)();
-    double mll_var();
-    double mll_mean();
-    double mll_meanvar();
-    double mll_meanvar_exp();
-    double mll_meanvar_gamma();
-    double mll_meanvar_poisson();
-    double mbic_var();
-    double mbic_mean();
-    double mbic_meanvar();
-    double mbic_meanvar_exp();
-    double mbic_meanvar_gamma();
-    double mbic_meanvar_poisson();
-    
-    if (strcmp(*cost_func,"var.norm")==0){
+void PELT_online(char   **cost_func,
+                 double *sumstat,        /* summary statistics for series (n+1 rows, 3 cols) */
+                 int    *ndone,          /* length already processed */
+                 int    *nupdate,        /* length of new data in this update */
+                 double *pen,            /* penalty */
+                 int    *cptsout,        /* changepoint locations up to n */
+                 int    *err,            /* 0 by default, non-zero for error */
+                 double *shape,          /* gamma shape parameter (if used) */
+                 int    *minseglen,      /* minimum segment length */
+                 double *lastchangelike, /* DP costs up to n (to be extended) */
+                 int    *lastchangecpts, /* DP backpointers */
+                 int    *checklist,      /* candidate last-changepoints */
+                 int    *nchecklist)     /* number of candidates in checklist */
+{
+    /* choose cost function based on string */
+    double (*costfunction)(double, double, double, int, double) = NULL;
+
+    if (strcmp(*cost_func, "var.norm") == 0) {
         costfunction = &mll_var;
-    }
-    else if (strcmp(*cost_func,"mean.norm")==0){
+    } else if (strcmp(*cost_func, "mean.norm") == 0) {
         costfunction = &mll_mean;
-    }
-    else if (strcmp(*cost_func,"meanvar.norm")==0){
+    } else if (strcmp(*cost_func, "meanvar.norm") == 0) {
         costfunction = &mll_meanvar;
-    }
-    else if (strcmp(*cost_func,"meanvar.exp")==0){
+    } else if (strcmp(*cost_func, "meanvar.exp") == 0) {
         costfunction = &mll_meanvar_exp;
-    }
-    else if (strcmp(*cost_func,"meanvar.gamma")==0){
+    } else if (strcmp(*cost_func, "meanvar.gamma") == 0) {
         costfunction = &mll_meanvar_gamma;
-    }
-    else if (strcmp(*cost_func,"meanvar.poisson")==0){
+    } else if (strcmp(*cost_func, "meanvar.poisson") == 0) {
         costfunction = &mll_meanvar_poisson;
-    }
-    else if (strcmp(*cost_func,"mean.norm.mbic")==0){
+    } else if (strcmp(*cost_func, "mean.norm.mbic") == 0) {
         costfunction = &mbic_mean;
-    }
-    else if (strcmp(*cost_func,"var.norm.mbic")==0){
+    } else if (strcmp(*cost_func, "var.norm.mbic") == 0) {
         costfunction = &mbic_var;
-    }
-    else if (strcmp(*cost_func,"meanvar.norm.mbic")==0){
+    } else if (strcmp(*cost_func, "meanvar.norm.mbic") == 0) {
         costfunction = &mbic_meanvar;
-    }
-    else if (strcmp(*cost_func,"meanvar.exp.mbic")==0){
+    } else if (strcmp(*cost_func, "meanvar.exp.mbic") == 0) {
         costfunction = &mbic_meanvar_exp;
-    }
-    else if (strcmp(*cost_func,"meanvar.gamma.mbic")==0){
+    } else if (strcmp(*cost_func, "meanvar.gamma.mbic") == 0) {
         costfunction = &mbic_meanvar_gamma;
-    }
-    else if (strcmp(*cost_func,"meanvar.poisson.mbic")==0){
+    } else if (strcmp(*cost_func, "meanvar.poisson.mbic") == 0) {
         costfunction = &mbic_meanvar_poisson;
+    } else {
+        /* unknown cost; mark error and return */
+        if (err) *err = 5;
+        return;
+    }
+
+    /* allocate temporary like vector (global pointer so FreePELT can free it) */
+    int n      = *ndone + *nupdate;
+    int maxlen = *nupdate + *nchecklist + 1;
+
+    tmplike = (double *) calloc((size_t) maxlen, sizeof(double));
+    if (tmplike == NULL) {
+        if (err) *err = 4;
+        return;
     }
 
     double minout;
-    
-    double *tmplike;
-    tmplike = (double *)calloc((*nupdate+*nchecklist+1),sizeof(double));
-    if (tmplike==NULL)   {
-        *error = 4;
-        goto err4;
-    }
-    
-    int n=*ndone+*nupdate;
-    int tstar;
-    int i,whichout,nchecktmp;
-    
-    void min_which();
-    int min = 2*(*minseglen);
-    if(*ndone==0){
-      lastchangelike[0]= -*pen;
-      lastchangecpts[0]=0; 
-      
-        if(min>*nupdate){min=*nupdate;} // you might have less updates than 2*minseglen thus you can't add a change yet!
-        for(i=*minseglen;i<min;i++){
-            lastchangelike[i] = costfunction(*(sumstat+i),*(sumstat + n + 1 + i),*(sumstat + n + n + 2 + i),i, *shape);
-            // lastchangelike[i] = mll_mean(n, sumstat, i, 0, i, *shape);
+    int    tstar;
+    int    i, whichout, nchecktmp;
+
+    int min = 2 * (*minseglen);
+
+    /* Initialisation block: if nothing processed yet */
+    if (*ndone == 0) {
+        /* convention: F(0) = -pen */
+        lastchangelike[0] = -(*pen);
+        lastchangecpts[0] = 0;
+
+        if (min > *nupdate) {
+            min = *nupdate;    /* can't add a change if not enough data */
         }
-        
-        for(i=*minseglen;i<min;i++){
+
+        /* first-pass costs for segments [1..i], length i */
+        for (i = *minseglen; i < min; i++) {
+            /* sumstat layout: (n+1) x 3 stored column-major:
+               col1: index 0..n
+               col2: offset (n+1)
+               col3: offset 2*(n+1)
+             */
+            double x  = *(sumstat + i);
+            double x2 = *(sumstat + n + 1 + i);
+            double x3 = *(sumstat + n + n + 2 + i);
+
+            lastchangelike[i] = costfunction(x, x2, x3, i, *shape);
+        }
+
+        for (i = *minseglen; i < min; i++) {
             lastchangecpts[i] = 0;
         }
-                
-        *ndone=min;
-	*nupdate=*nupdate-min;
-        if(*nupdate==0){return;} // i.e. you can't add a change
-        *nchecklist=2;
-        *(checklist)=0;
-        *(checklist+1)=*minseglen;
+
+        *ndone    = min;
+        *nupdate -= min;
+
+        if (*nupdate == 0) {
+            /* nothing left to update: free and return */
+            free(tmplike);
+            tmplike = NULL;
+            return;
+        }
+
+        *nchecklist      = 2;
+        checklist[0]     = 0;
+        checklist[1]     = *minseglen;
     }
 
-    for(tstar=*ndone;tstar<(n+1);tstar++){
-        R_CheckUserInterrupt(); /* checks if user has interrupted the R session and quits if true */
-	
-        for(i=0;i< *nchecklist;i++){
-/*	if(tstar==20){
-		Rprintf("lcl:%f, cf:%f, ss1:%f, ss2:%f, ss3:%f, ss4:%f, ss5:%f, ss6:%f \n",
-			lastchangelike[*(checklist+i)], costfunction(*(sumstat+tstar)-*(sumstat+*(checklist+i)),*(sumstat + n + 1 +tstar)-*(sumstat + n + 1 +*(checklist+i)),*(sumstat + n + n + 2 +tstar)-*(sumstat + n + n + 2 +*(checklist+i)), tstar-*(checklist+i), *shape),*(sumstat+tstar),*(sumstat+*(checklist+i)),*(sumstat + n + 1 +tstar),*(sumstat + n + 1 +*(checklist+i)), *(sumstat + n + n + 2 +tstar),*(sumstat + n + n + 2 +*(checklist+i)));
-	} */
-            tmplike[i]=lastchangelike[*(checklist+i)] + costfunction(*(sumstat+tstar)-*(sumstat+*(checklist+i)),*(sumstat + n + 1 +tstar)-*(sumstat + n + 1 +*(checklist+i)),*(sumstat + n + n + 2 +tstar)-*(sumstat + n + n + 2 +*(checklist+i)), tstar-*(checklist+i), *shape)+*pen;
+    /* Main online PELT recursion */
+    for (tstar = *ndone; tstar < (n + 1); tstar++) {
+        R_CheckUserInterrupt();
+
+        /* compute candidates' costs for changepoint at each checklist entry */
+        for (i = 0; i < *nchecklist; i++) {
+            int tau = checklist[i];
+
+            double x  = (*(sumstat + tstar)                - *(sumstat + tau));
+            double x2 = (*(sumstat + n + 1 + tstar)        - *(sumstat + n + 1 + tau));
+            double x3 = (*(sumstat + n + n + 2 + tstar)    - *(sumstat + n + n + 2 + tau));
+            int    len = tstar - tau;
+
+            tmplike[i] =
+                lastchangelike[tau] +
+                costfunction(x, x2, x3, len, *shape) +
+                *pen;
         }
 
-        min_which(tmplike,*nchecklist,&minout,&whichout); /*updates minout and whichout with min and which element */
-        *(lastchangelike+tstar)=minout;
-        *(lastchangecpts+tstar)=*(checklist+whichout); 
-        
-        /* Update checklist for next iteration, first element is next tau */
-        nchecktmp=0;
-        for(i=0;i< *nchecklist;i++){
-            if(tmplike[i]<= (*(lastchangelike+tstar)+*pen)){
-                *(checklist+nchecktmp)=*(checklist+i);
-                nchecktmp+=1;
+        /* choose best candidate */
+        min_which(tmplike, *nchecklist, &minout, &whichout);
+        lastchangelike[tstar] = minout;
+        lastchangecpts[tstar] = checklist[whichout];
+
+        /* update checklist for next iteration */
+        nchecktmp = 0;
+        for (i = 0; i < *nchecklist; i++) {
+            if (tmplike[i] <= lastchangelike[tstar] + *pen) {
+                checklist[nchecktmp] = checklist[i];
+                nchecktmp++;
             }
         }
-	*nchecklist=nchecktmp;
-        *(checklist+nchecktmp)=tstar-(*minseglen - 1);  // at least 1 obs per seg
-        *nchecklist+=1;
-    } // end taustar
+        *nchecklist = nchecktmp;
 
-    // put final set of changepoints together
-    int ncpts=0;
-    int last=n;
-    while(last!=0){
-        *(cptsout+ncpts)=last;
-        last=*(lastchangecpts+last);
-        ncpts+=1;
+        /* new candidate: tstar - (minseglen - 1) ensures minseglen on next seg */
+        checklist[nchecktmp] = tstar - (*minseglen - 1);
+        (*nchecklist)++;
+    }
+
+    /* reconstruct changepoints: walk back from n to 0 */
+    int ncpts = 0;
+    int last  = n;
+    while (last != 0) {
+        cptsout[ncpts] = last;
+        last = lastchangecpts[last];
+        ncpts++;
     }
 
     free(tmplike);
-err4:  return;
+    tmplike = NULL;
 }
-

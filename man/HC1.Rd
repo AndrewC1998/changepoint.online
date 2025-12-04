@@ -8,7 +8,7 @@ G+C Content in Human Chromosome 1
  This dataset gives the G+C content in 3kb windows along the Human Chromosome from 10Mb to 33Mb (no missing data).
 }
 \usage{
-HC1
+data(HC1)
 }
 \format{
 	A vector of length 23553.

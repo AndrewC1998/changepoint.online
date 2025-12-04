@@ -54,9 +54,7 @@ Rebecca Killick
 \code{\link{PELT.online}},\code{\link{PELT.online.initialise}},\code{\linkS4class{ocpt}}
 }
 \examples{
-#This function should only be used by developers, 
-#see its use in ocpt.mean.update, ocpt.var.update 
-#and ocpt.meanvar.update.
+#This function should only be used by developers, see its use in ocpt.mean.update, ocpt.var.update and ocpt.meanvar.update.
 }
 
 \keyword{methods}
